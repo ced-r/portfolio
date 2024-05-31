@@ -1,0 +1,635 @@
+---
+title: "ICT513 - Assignment 3"
+author: "Chew Jian Yue"
+fontsize: 12pt
+output:
+  bookdown::pdf_document2:
+    number_sections: yes
+    keep_tex: yes
+    toc: yes
+    toc_depth: 5
+    fig_caption: yes
+    highlight: default
+    df_print: kable
+    includes:
+      in_header: parahdr.tex
+  word_document:
+    toc: yes
+    toc_depth: 4
+  html_document:
+    number_sections: yes
+    toc: yes
+    toc_float: yes
+geometry: margin=1in
+header-includes: \usepackage{fvextra} \DefineVerbatimEnvironment{Highlighting}{Verbatim}{breaklines,commandchars=\\\{\}}
+  \usepackage{float} \floatplacement{figure}{H}
+  \usepackage{pdfpages}
+bibliography: references.bib
+---
+
+```{r setup, include=FALSE}
+chooseCRANmirror(graphics=FALSE, ind=1)
+
+# fix PDF code exceeds code block 
+library(knitr)
+# library(formatR)
+knitr::opts_chunk$set(tidy.opts=list(width.cutoff=60), tidy=TRUE, warning = FALSE, message = FALSE)
+
+# knitr::opts_chunk$set(comment = "%")
+knitr::opts_chunk$set(comment = NA)
+
+knitr::opts_chunk$set(echo=FALSE)
+```
+
+<!-- # First steps -->
+
+```{r, include = FALSE}
+# set working directory
+# setwd("~/OneDrive - Kaplan/1. Murdoch (2022-2023)/!Sem3/ICT513 Data Analytics/!Assignment 3")
+setwd(r"(A:\OneDrive\OneDrive - Kaplan\1. Murdoch (2022-2023)\!Sem3\ICT513 Data Analytics\!Assignment 3)")
+
+# Import the required libraries
+library(tidyverse)
+library(devtools)
+library(usethis)
+library(pls)
+
+library(readxl) # read excel files
+
+# devtools::install_github("vqv/ggbiplot")
+library(ggbiplot)
+
+# import the datasets
+forestf <- read.csv("Algerian_forest_fires_dataset.csv") # For Question 1
+milk <- read_excel("MilkProductionA3.xlsx") # For Question 2
+```
+
+# Question 1
+
+The objective of the Principal Component Analysis (PCA) is to reduce the large number of variables to a smaller set of Principal Components (PCs) that capture as much variability and information as possible across the set of variables.
+
+## Understanding the dataset
+
+For the Algerian Forest Fires Dataset, there are a total of 244 instances/observations regrouped into two *balanced* regions. The dataset represents data collected during the period of June 2012 and Sept 2012.
+
+```{r, echo = TRUE}
+glimpse(forestf)
+```
+
+```{r}
+library(lubridate)
+forestf <- forestf %>% 
+  mutate('date' = make_date(year = year, month = month, day = day))
+```
+
+```{r}
+forestf <- forestf %>% 
+  mutate_at(c(4:13), as.numeric)
+```
+
+Ensuring that all the observations in the dataset are within the range of values, by looking at the maximum and minimum values, as found on the website.
+
+![Screenshot of information about the dataset](website.png)
+
+```{r}
+summary(forestf)
+```
+
+```{r}
+forestf.1 <- forestf %>% 
+  subset(Temperature >=22 & Temperature <=42) %>% 
+  subset(RH >= 21 & RH <= 90) %>% 
+  subset(Ws >= 6 & Ws <= 29) %>% 
+  subset(Rain >= 0 & Rain <= 16.8) %>% 
+  subset(FFMC >= 28.6 & FFMC <= 92.5) %>% 
+  subset(DMC >= 1.1 & DMC <= 65.9) %>% 
+  subset(DC >= 7 & DC <= 220.4) %>% 
+  subset(ISI >= 0 & ISI <= 18.5) %>% 
+  subset(BUI >= 1.1 & BUI <= 68) %>% 
+  subset(FWI >= 0 & FWI <= 31.1)
+```
+
+There should only be two factor levels for `Classes` variable, either `not fire` or `fire`. The dataset provided has many levels because of trailing and leading whitespaces. Remove the trailing and leading spaces for the `Classes` variable, factor levels. Also, I remove observations with empty factor levels (containing only whitespaces).
+
+```{r}
+forestf$Classes <- trimws(forestf$Classes, which = c("both"))
+forestf <- forestf[!(forestf$Classes == ""), ]
+# forestf %>% filter(Classes != "")
+```
+
+<!-- Converting the variable to the factor datatype recognised in R -->
+
+```{r}
+forestf$Classes <- as.factor(forestf$Classes)
+unique(forestf$Classes)
+```
+
+After removing the single observation with `Classes` as not labelled whitespace, we are left with 137 observations of `Classes` labelled `fire`, and 106 observations of `not fire`.
+
+```{r}
+forestf %>% 
+  group_by(Classes) %>% 
+  dplyr::summarize("Count" = n())
+
+```
+
+Doesn't make sense to apply PCA on index-like value such as day, month and year.
+
+I will remove these data through `select` method and excluding the variables `day`, `month` and `year`.
+
+```{r}
+forestf <- forestf %>% dplyr::select(c(-day, -month, -year, -date))
+```
+
+```{r}
+sum(is.na(forestf))
+```
+
+There is no "NA" values in the dataset.
+
+```{r}
+# Drop NA values in case there is any 
+forestf <- forestf %>% drop_na()
+```
+
+Understanding the data through data visualisation
+
+```{r}
+hist(forestf$Temperature, main = "Histogram of Temperature", xlab = "Temperature")
+```
+
+```{r}
+# devtools::install_github("thomasp85/patchwork")
+# library(patchwork)
+ggplot(data = forestf, aes(y = stat(density), x = Temperature,
+    fill = Classes)) + geom_density(kernel = "gaussian", alpha = 0.25) +
+    theme(legend.position = c(0.8875, 0.815)) + labs(title = "Density plots of Temperature by Class",
+x = "Temperature", y = "Density", fill = "Classes")
+
+ggplot(data = forestf, aes(y = stat(density), x = RH,
+    fill = Classes)) + geom_density(kernel = "gaussian", alpha = 0.25) +
+    theme(legend.position = c(0.8875, 0.815)) + labs(title = "Density plots of Relative Humidity by Class",
+x = "RH", y = "Density", fill = "Classes")
+
+```
+
+From the scatterplot matrix, most of the variables, visually, seems to have some correlation with one another.
+
+```{r}
+levels(forestf$Classes)
+```
+
+```{r}
+pairs(forestf[,1:10], pch = 19,  cex = 0.5,
+      col = c(2,1),
+      lower.panel=NULL, oma=c(3,3,3,15))
+legend(x="bottomleft", pch = 19, cex = 1, col = c(2,1), legend = c("fire", "not fire"), xpd=T)
+```
+
+<!-- Are the factors identified by R - the factor levels -->
+
+## (a) Should this data be scaled prior to running a PCA or not?
+
+A key point to note, is that the covariance, $Cov(X_i, Y)$ is highly dependent on and highly affected by the scale of $X_i$ and $Y$, where $X_i$ is each of the independent variables in the dataset. There are reasons to believe that FFMC and DMC (for example) are of different scale, which may affect the results of Covariance.
+
+The variables are of different units and have different ranges, hence scaling through standardisation is required prior to running PCA. However, when running PCA using the `prcomp` function, we can tell the function to standardise the values by specifying `scale = TRUE`. Hence, we do not need to manually scale the variables. However, for another function that conducts PCA without scaling, I will have to scale the data before running PCA. This is because variables such as `FWI` that is of significantly higher scale than `Temperature` may dominate measures of distance (sometimes due to unit differences), variables with lower scale would have reduced usefulness in the analysis. 
+
+```{r, echo=TRUE}
+forestf.cov <- cov(cbind(forestf[, 1:10]))
+forestf.cov 
+```
+
+Most covariances are non-zero, hence there is some correlation and dependence between each pair of variables.
+
+## (b) Consider the eigenvalues for the principal component analysis and answer the following (provide your relevant R output as well)
+
+```{r, echo = TRUE}
+forestf.pca <- prcomp(~Temperature + RH + Ws + Rain + FFMC + DMC + DC + ISI + BUI + FWI,
+                      data = forestf,
+                      scale = TRUE)
+# Eigenvalues
+forestf.pca$sdev^2
+```
+
+```{r, fig.cap="Scree plot of PCA"}
+# Scree plot
+
+plot((forestf.pca$sdev^2) / sum(forestf.pca$sdev^2),
+     type = "b",
+     xaxt = "n",
+     xlab = "Principal Components",
+     ylab = "Percentage of Total Variance",
+     main = "Screeplot of Variance Accounted for by Principal Components")
+
+axis(side = 1, at = 1:10, labels = c("PC1", "PC2", "PC3", "PC4", "PC5", "PC6", "PC7", "PC8", "PC9", "PC10"))
+```
+
+### How many principal components would you select if using the "elbow" method?
+
+Using visual analysis of the scree plot, the additional percentage of total variance (relative contribution) explained by PC4 as compared to PC3 is minimal. The percentage of total variance explained by PC1, PC2, and PC3 can be considered quite substantial.
+
+Hence, through the "elbow" method, I would select three principal components, PC1, PC2 and PC3.
+
+### How many principal components would you select if attempting to account for 70% of total variation?
+
+```{r, echo = TRUE}
+(forestf.pca$sdev^2) / sum(forestf.pca$sdev^2)
+```
+
+```{r, echo = TRUE}
+cumsum((forestf.pca$sdev^2) / sum(forestf.pca$sdev^2))
+```
+
+```{r}
+# kable(cumsum((forestf.pca$sdev^2) / sum(forestf.pca$sdev^2)))
+```
+
+From the above output, I would select two Principal Components, PC1 and PC2. Both principal components will account for 73.10% (above 70%) of the total variation in the variables. PC1 will account for about 57.27% and PC2 will account for 15.83% of total variation.
+
+## (c) Produce a biplot of the first two principal components. What variable groupings load onto these components similarly?
+
+```{r, fig.cap="Biplot of the first two principal components"}
+# Biplot of the first two principal components
+biplot(forestf.pca,
+       xlim = c(-0.25, 0.2),
+       ylim = c(-0.2, 0.2))
+```
+
+```{r}
+# biplot(forestf.pca)
+```
+
+```{r ggbiplot, fig.cap="Alternate biplot using ggbiplot"}
+ggbiplot(forestf.pca, obs.scale = 1, var.scale = 1, 
+         groups = factor(forestf$Classes, labels = levels(forestf$Classes)),
+         ellipse = TRUE, circle = TRUE) + 
+  scale_color_discrete(name="") +
+  theme(legend.direction = "horizontal", legend.position = "top")
+
+```
+
+The most recent biplot produces clearer results. Based on visual analyses of the bi-plots, the vector for `Ws` extend further from the origin in the vertical direction (corresponding to the second Principal Component, PC2) than the other vector, this means there is greater loading of `Ws` on PC2 but weak loading on PC1. `Temperature` and `Rain`, `Temperature` and `RH` are uncorrelated with each other.
+
+`Temperature`, `RH`, `Ws`, `Rain`, `DC` are more loaded into PC2, because the vertical component of their vectors extend further than the horizontal component (representing PC1). The rest of the variables, `FFMC`, `DMC`, `ISI`, `BUI` and `FWI` are more strongly loaded on `PC1` than `PC2`. Similar results are reflected on the coefficients of the eigenvectors for PC1 and PC2.
+
+
+
+<!-- TODO -->
+
+<!-- In contrast, `FWI` and `ISI` index variables seem to be loaded greater on PC1 than on PC2. -->
+
+<!-- the variable groupings of index variables seem to load onto the components similarly. `DC`, \` -->
+
+<!-- With reference to Figure \ref{fig: ggbiplot}, `RH` and `Rain` variables are variable groupings that are similarly loaded -->
+
+## (d) What are the percentage contributions (loadings) of the first five variables of PC1?
+
+```{r}
+forestf.pca$rotation[1:5, "PC1"]
+```
+
+```{r, echo=TRUE}
+sum(forestf.pca$rotation[1:5, "PC1"]^2)
+```
+
+```{r}
+# arrange according to largest contribution to smallest
+# loadings.1 <- forestf.pca$rotation[, "PC1"]^2 %>% as.data.frame() %>% arrange(desc(forestf.pca$rotation[, "PC1"]^2))
+# 
+# sum(loadings.1[1:5, ])
+```
+
+```{r}
+# sum(abs(forestf.pca$rotation[1:5, "PC1"])) / sum(abs(forestf.pca$rotation[, "PC1"]))
+```
+
+```{r}
+# kable(forestf.pca$rotation[, "PC1"])
+```
+
+| First five variables | Coefficients of eigenvectors of PC1 |
+|----------------------|-------------------------------------|
+| Temperature          | 0.29834510                          |
+| RH                   | -0.27701600                         |
+| Ws                   | -0.04037637                         |
+| Rain                 | -0.19606535                         |
+| FFMC                 | 0.34846690                          |
+
+The percentage contributions (loadings) for the first five variables (`Temperature`, `RH`, `Ws`, `Rain`, `FFMC`) of PC1 is 32.72%.
+
+# Question 2
+
+We are interested to know if `BabyBirthWeight`, `NumberFeeds` and `MotherConcern` can aid in classifying `ProductionCategory`. In this case, `MotherID` is not an important variable.
+
+```{r}
+set.seed(1)
+library(MASS)
+```
+
+```{r}
+glimpse(milk)
+```
+
+```{r}
+# Select only relevant variables
+milk <- milk %>% dplyr::select(c(-MotherID))
+```
+
+```{r}
+# Number of NA values
+sum(is.na(milk))
+```
+
+```{r}
+# Remove missing values for variables
+milk.reduced <- milk %>% drop_na()
+```
+
+```{r}
+# Convert `ProductionCategory` to be categorical
+milk.reduced$ProductionCategory <- as.factor(milk.reduced$ProductionCategory)
+```
+
+## (a) Discuss the assumptions of linear discriminant analysis as they relate to this data set.
+
+Assumptions of Linear Discriminant Analysis (**LDA**):
+
+### Normality
+
+Explanatory variables ($X_1, X_2, ..., X_k$) must follow a multivariate normal distribution for each value of the grouping variable $Y$.
+
+```{r}
+# Density plot to visually tell normality
+ggplot(data = milk.reduced, aes(y = stat(density), x = BabyBirthweight,
+                                fill = ProductionCategory)) +
+  geom_density(kernel = "gaussian", alpha = 0.25) +
+  theme(legend.position = c(0.8875, 0.815)) +
+  labs(title = "Density plot of BabyBirthweight by ProductionCategory",
+       x = "BabyBirthweight", y = "Density", fill = "ProductionCategory")
+
+ggplot(data = milk.reduced, aes(y = stat(density), x = NumberFeeds,
+                                fill = ProductionCategory)) +
+  geom_density(kernel = "gaussian", alpha = 0.25) +
+  theme(legend.position = c(0.8875, 0.815)) +
+  labs(title = "Density plot of NumberFeeds by ProductionCategory",
+       x = "NumberFeeds", y = "Density", fill = "ProductionCategory")
+
+ggplot(data = milk.reduced, aes(y = stat(density), x = MotherConcern,
+                                fill = ProductionCategory)) +
+  geom_density(kernel = "gaussian", alpha = 0.25) +
+  theme(legend.position = c(0.8875, 0.815)) +
+  labs(title = "Density plot of MotherConcern by ProductionCategory",
+       x = "MotherConcern", y = "Density", fill = "ProductionCategory")
+```
+
+The assumption of linear discriminant analysis following a multivariate normal distribution is violated.
+
+For `BabyBirthWeight`, the density plots for `ProductionCategory` that is `Low` and `Medium` shows a bimodal distribution. In particular, the bimodality of production categories `High` and `Low` for `NumberFeeds` and `BabyBirthweight` violates the assumption of normality.
+
+There is no noticeable right-skewness in most, if not all of the sub-groups throughout the variables. Hence, log-transformation will not be applied for this analyses. Furthermore, it is assumed that multivariate normality assumption is not violated for the purposes of this assignment.
+
+### Homoscedasticity / equality of variances
+
+The covariance matrices of $X_1, X_2, ..., X_k$ are equivalent for each value of the grouping variable $Y$. This means that the general shape/scatter and direction of points are relatively the same.
+
+```{r q2-spm, fig.cap="Scatterplot matrix between explanatory variables"}
+pairs(milk.reduced[,2:4], pch = 19,  cex = 1,
+      col = c(1,2,4),
+      lower.panel=NULL)
+legend(x="bottomleft", pch = 19, cex = 1, col = c(1,2,4), legend = levels(milk.reduced$ProductionCategory), title = "Production Category", xpd=T)
+```
+
+From the scatterplot matrix, there is no significant distinction and many overlaps between points of different groups. From visual observation, homoscedasticity seems to have been violated for some groups, for example, for the plot `BabyBirthWeight` vs. `NumberFeeds`, the production category `High` data points seems to show an increasing variance with funnel-like shape.
+
+Furthermore, for `NumberFeeds` vs. `MotherConcern`, `Medium` production category, seems to show similarly shows increasing variance, heteroscedasticity. The direction of points for each of the groups are unclear. Hence, it is likely that the assumption of homoscedasticity is violated.
+
+### Independence of observations
+
+Experimental units, or, equivalently paired observations ($X_{1i}, X_{2i}, ..., X_{ki}, Y_i$) for $i = 1, 2, ..., n$ are independent.
+
+Independence of observations assumption is assumed not to be violated, each observation is an independent observation. There is no indication that this assumption is violated in the question. It is assumed that every observation "represents" and different mother, and no two or more observations come from the "same" mother.
+
+## (b) Using linear discriminant analysis, determine the hit rate when considering the variables `baby birthweight`, `number of feeds` and `mother concern` in trying to predict the outcome.
+
+```{r, echo = TRUE}
+# Use LDA function to conduct LDA
+milk.reduced.lda <- lda(ProductionCategory ~ BabyBirthweight + NumberFeeds + MotherConcern, data = milk.reduced)
+
+# Get LDA values
+milk.lda.values <- as.data.frame(predict(milk.reduced.lda)$x)
+
+# To get LDA classes 
+# predict(milk.reduced.lda)
+
+# Create confusion matrix (or classification matrix)
+confusion.matrix.milk.LD1 <- table(predict(milk.reduced.lda, dimen = 1)$class, milk.reduced$ProductionCategory)
+
+confusion.matrix.milk.LD2 <- table(predict(milk.reduced.lda, dimen = 2)$class, milk.reduced$ProductionCategory)
+
+confusion.matrix.milk.LD1.LD2 <- table(predict(milk.reduced.lda)$class, milk.reduced$ProductionCategory)
+
+
+# View the confusion matrix
+confusion.matrix.milk.LD1
+
+confusion.matrix.milk.LD2
+
+confusion.matrix.milk.LD1.LD2
+```
+
+```{r, echo = TRUE}
+# Calculate the hit rate and misclassification rate
+hit.rate.LD1 <- (0+23+114) / (1+23+3+11+6+114)
+hit.rate.LD1
+
+hit.rate.LD2 <- (0+23+113) / (1+1+23+3+11+6+113)
+hit.rate.LD2
+
+hit.rate.LD1.LD2 <- hit.rate.LD2
+
+misclassification.rate.LD1 <- 1 - hit.rate.LD1
+misclassification.rate.LD1
+```
+
+The highest hit rate when considering the possibly relevant variables is 0.8670886 or 0.867. This corresponds with using the first linear discriminant function, LD1.
+
+## (c) Using the group means, describe the three outcomes and how they typically differ.
+
+```{r, echo=TRUE}
+milk.reduced.lda$means
+```
+
+Group means shows the group center of gravity and shows the mean of each variable in each group.
+
+The means of `BabyBirthweighht` is generally larger by a substantial magnitude compared to `MotherConcern` followed by `NumberFeeds`. It has been suggested in the group means that with low maternal production, there are low baby birth weight and lower number of feeds (on average per day) but mother's concern is the highest. This is because, the variables are all measured on different scales.  
+
+For `High` maternal production, there is the highest baby birth weight, highest number of feeds with medium mother's concern. This is surprising as the mother's concern for high maternal production is lower than for low maternal production but higher than for medium maternal production. Generally, mothers are more concerned when their maternal production is too high, and mothers are highly concerned when their maternal production is too low. It is interesting to note that although mothers are highly concerned, the number of feeds are low, possibly due to the low maternal production, that could not trigger more feeds or the baby's reluctance on accepting more feeds. This may have aggravated the mother concern measure. 
+
+Generally, the maternal production seems to correspond with the baby birth weight and the number of feeds per day on average. 
+
+Within each variable, 
+
+```{r}
+plot(milk.reduced.lda$means, type="b")
+```
+
+
+## (d) How does this change if we say that the costs of mis-diagnosing the high or low production mothers are 5 times that of medium production.
+
+### What are the new priors?
+
+For the purposes of predictive LDA, LOOCV is applied.
+
+```{r, echo=TRUE}
+# Define the cost of misclassification of high and low is 5 times more than medium
+cost <- c(5,5,1)
+
+# Run LDA with LOOCV
+milk.lda.cv <- lda(ProductionCategory ~ BabyBirthweight + NumberFeeds + MotherConcern, data = milk.reduced, CV = TRUE)
+
+cm.milk.cv <- table(milk.lda.cv$class, milk.reduced$ProductionCategory)
+cm.milk.cv
+
+cm.milk.cv.hitrate <- (0+23+113) / (1+1+23+3+11+6+113)
+cm.milk.cv.hitrate 
+```
+
+```{r, echo=TRUE}
+# Calculate loss based on costs and misclassifications
+loss <- 0
+
+for (i in 1:ncol(cm.milk.cv)) {
+  loss <- loss + cost[i] * sum(cm.milk.cv[-i, i])
+}
+loss
+```
+
+```{r, echo = TRUE}
+# Compute old prior probabilities
+old.prior <- table(milk.reduced$ProductionCategory) / sum(table(milk.reduced$ProductionCategory))
+old.prior
+
+# Create new priors based on costs
+new.prior <- cost * old.prior / sum(cost*old.prior)
+new.prior
+```
+
+The new prior probabilities are as follows:
+
+| High      | Low       | Medium    |
+|-----------|-----------|-----------|
+| 0.1863354 | 0.4503106 | 0.3633540 |
+
+### What is the new hit rate?
+
+```{r, echo=TRUE}
+# Re-run LDA with new prior
+milk.lda.cv.newprior <- lda(ProductionCategory ~ BabyBirthweight + NumberFeeds + MotherConcern, 
+                            data = milk.reduced, CV = TRUE, prior = new.prior)
+
+cm.lda.cv.newprior <- table(milk.lda.cv.newprior$class, milk.reduced$ProductionCategory)
+
+cm.lda.cv.newprior
+```
+
+```{r, echo=TRUE}
+cm.lda.cv.newprior.hitrate <- (3+28+99) / (3+12+1+28+6+8+1+99)
+cm.lda.cv.newprior.hitrate
+```
+
+```{r, echo=TRUE}
+# Calculate loss based on costs and misclassification
+loss <- 0
+
+for (i in 1:ncol(cm.lda.cv.newprior)) {
+  loss <- loss + cost[i] * sum(cm.lda.cv.newprior[-i, i])
+}
+loss
+```
+
+From the confusion matrix above, the new hit rate is 0.8227848 or 0.823. As expected the prior probabilities for `High` and `Low` are higher than before, while for `Medium`, it has reduced. The loss has also been reduced.
+
+## (e) Is linear discriminant analysis effective in this context? Provide at least one visualisation to support your answer.
+
+```{r, echo=TRUE}
+plot(milk.reduced$BabyBirthweight, milk.reduced$NumberFeeds,
+     col = milk.reduced$ProductionCategory,
+     xlab = "BabyBirthweight",
+     ylab = "NumberFeeds",
+     pch = 19,
+     cex = 1)
+legend(x = "bottomright",
+       legend = levels(milk.reduced$ProductionCategory),
+       pch = 19,
+       col = 1:3)  
+
+
+plot(milk.reduced$BabyBirthweight, milk.reduced$MotherConcern,
+     col = milk.reduced$ProductionCategory,
+     xlab = "BabyBirthweight",
+     ylab = "MotherConcern",
+     pch = 19,
+     cex = 1)
+legend(x = "bottomright",
+       legend = levels(milk.reduced$ProductionCategory),
+       pch = 19,
+       col = 1:3)
+
+plot(milk.reduced$NumberFeeds, milk.reduced$MotherConcern,
+     col = milk.reduced$ProductionCategory,
+     xlab = "NumberFeeds",
+     ylab = "MotherConcern",
+     pch = 19,
+     cex = 1)
+legend(x = "bottomleft",
+       legend = levels(milk.reduced$ProductionCategory),
+       pch = 19,
+       col = 1:3)  
+```
+
+```{r}
+plot(milk.lda.values$LD1, milk.lda.values$LD2,
+     xlab = "LD1",
+     ylab = "LD2",
+     col = milk.reduced$ProductionCategory,
+     pch = 19)
+
+legend(x = "bottomleft",
+       legend = levels(milk.reduced$ProductionCategory),
+       pch = 19,
+       col = 1:3)  
+```
+
+```{r}
+ldahist(milk.lda.values[, 1], g = milk.reduced$ProductionCategory)
+
+ldahist(milk.lda.values[, 2], g = milk.reduced$ProductionCategory)
+```
+
+From the three scatterplots, there is substantial overlap between the distributions of values for each of the three production levels, this suggests that LDA may struggle to produce splits/classifications that clearly distinguish groups.
+
+From the plot of second discriminant function values against the first discriminant function values (LD2 vs. LD1), there is some clustering (not very distinct) for `Medium` and `Low` groups. A linear separating line can be drawn in between with some allowance for misclassification. Unfortunately, there is no clear/distinct clustering for `High` group. LDA is more effective at revealing between `Low` and `Medium` groupings, but not so for `High`.
+
+From the stacked histogram figures, the first linear discriminant function seems better at discriminating between the `Low` and `Medium` group, however, it seems that there is some overlap between `High` and `Low`, and `High` and `Medium` groups. There is too much alignment and overlap for the stacked histogram between `Low` and `Medium` group in the second discriminant function. This suggests that the second discriminant function is poor at creating separation for the grouping variable.
+
+Linear discriminant analysis can be considered effective if there are only `Low` and `Medium` groups in the dataset. However, in unseen and unlabelled datasets, and the goal is for prediction, there could be `High` maternal production that may be incorrectly classified to `Low` or `Medium` using LDA.
+
+In conclusion, LDA is not very effective, especially for unlabelled data for prediction, especially when we are unsure if it contains data that is of `High` maternal production.
+
+# Question 3
+
+For supervised learning problems, there are predictor measurement(s) $x_i$ and at least a response variable, $y_i$. A model is fitted to relate the response to its predictors. The goal is to better understand the relationship between the response and predictors (inference) and predicting the response of future observations (prediction) [@james2013introduction].
+
+In a *unsupervised* machine learning problem, there is no response variable to **supervise** our analysis. Given no associated response variable, $y_i$ to a set of measurements, $x_i$, it is not possible to utilise supervised machine learning techniques, which expect a response variable to be fed to train a model. Hence, the presence of the response variable used in the machine learning analysis is a key difference between supervised and unsupervised learning problems.
+
+The goals of supervised and unsupervised learning problems are different. In a supervised learning problem, our goal is either inference or for prediction. This is in contrast to the goal of unsupervised learning, to understand relationships between variables or between observations [@james2013introduction]. For example, *cluster analysis* such as K-means clustering algorithm is a unsupervised machine learning technique. The aim is to determine with only the response variables $x_i$ whether the observations can be clustered into distinct groups. The algorithm tries to group the data points into "k" clusters without knowledge of the grouping labels. Without a grouping variable $Y$, the algorithm attempts to assign observations to clusters by minimising the total distance from points to cluster centroids. Because, the algorithm requires cycling through each observation, if the dataset is large by length, it may be more computationally intensive compared to KNN. 
+
+This is different from K-nearest neighbours (KNN) classification algorithm. KNN is a supervised machine learning technique, as the labelled points can be supplied to the algorithm which will be utilised to learn how to label other points. For new points, the algorithm may calculate the euclidean distance to the labelled points and determine the shortest distance to neighbouring clusters and tries to find the optimal number of nearest neighbours for correct classification of new observations. In this case, the classification of other points are known because the data points are labelled with the response variable. 
+
+Another limitation to unsupervised learning, particularly K-means clustering, is that the cluster assignment of observations are not guaranteed to be unique as the same WSS could be achieved with different cluster assignments, unlike for KNN (objective distance calculation). Hence, we may not possibly know the global optimal for K-means clustering classification.
+
+
+# References
+```{r}
+# knitr::purl("Assignment_3_ChewJianYue.Rmd", documentation = 0) # generate R script
+```

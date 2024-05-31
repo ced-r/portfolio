@@ -1,0 +1,711 @@
+---
+title: "ICT513 - Assignment 2"
+author: "Chew Jian Yue"
+fontsize: 12pt
+output:
+  bookdown::pdf_document2:
+    number_sections: yes
+    keep_tex: yes
+    toc: yes
+    toc_depth: 5
+    fig_caption: yes
+    highlight: default
+    df_print: kable
+    includes:
+      in_header: parahdr.tex
+  word_document:
+    toc: yes
+    toc_depth: 4
+  html_document:
+    number_sections: yes
+    toc: yes
+    toc_float: yes
+geometry: margin=1in
+header-includes: \usepackage{fvextra} \DefineVerbatimEnvironment{Highlighting}{Verbatim}{breaklines,commandchars=\\\{\}}
+  \usepackage{float} \floatplacement{figure}{H}
+  \usepackage{pdfpages}
+---
+
+```{r setup, include=FALSE}
+chooseCRANmirror(graphics=FALSE, ind=1)
+
+# fix PDF code exceeds code block 
+library(knitr)
+# library(formatR)
+knitr::opts_chunk$set(tidy.opts=list(width.cutoff=60), tidy=TRUE)
+
+# knitr::opts_chunk$set(comment = "%")
+knitr::opts_chunk$set(comment = NA)
+```
+
+```{r, echo = FALSE}
+print_eqns <- function(models, dataset) {
+    for (i in 1:length(models)) {
+    cat('\n')
+    cat('Model ', i, ': ')
+    model_i <- lm(as.formula(models[i]), data = dataset)
+    eqn <- equatiomatic::extract_eq(model_i,
+                            wrap = TRUE,
+                            intercept = "beta",
+                            terms_per_line = 2,
+                            ital_vars = TRUE)
+    
+    # Work around (wrapping eqn) - https://tex.stackexchange.com/questions/256920/package-amsmath-error-beginaligned-allowed-only-in-math-mode
+    cat(paste("\\begin{math}"))
+    cat(paste(eqn))
+    cat(paste("\\end{math}"))
+    # summary(model_i)
+    
+    cat('\n')
+  }
+}
+```
+
+# Introduction
+
+Import the libraries into the working environment.
+
+```{r, echo=FALSE, include=FALSE}
+library(tidyverse)
+
+library(readxl) # reading xlsx Excel files
+
+library(bootstrap) # Qn 2 - bootstrap replicates
+
+library(jtools)
+
+set.seed(1) # For reproducibility of results (for manual tables, values static)
+```
+
+Import both datasets for the assignment into the R working environment.
+
+```{r}
+setwd(r"(A:\OneDrive\OneDrive - Kaplan\1. Murdoch (2022-2023)\!Sem3\ICT513 Data Analytics\!Assignment 2)")
+
+mental <- read.csv("Mental_health_hospitalisations.csv", header= TRUE)
+milkp <- read_xlsx("MilkProduction.xlsx") # No need to specify header = T?
+
+```
+
+# Question 1
+
+Based on the contextual information given by the question, hospitalisation rate (`hospitalisation.rate`) is identified as the response variable.
+
+Using the `glimpse(..)` function from the tidyverse library, we can attempt to understand the variables in the dataset.
+
+```{r}
+glimpse(mental)
+```
+
+Names of variables contained in the dataframe:
+
+```{r}
+# Names of variables contained in the dataframe
+names(mental)
+```
+
+Check if there are any missing values in the dataset. From the output, there are no missing values in the dataset.
+
+```{r}
+sum(is.na(mental))
+```
+
+Understanding the variables in the dataset, `age.group` and `sex` are most likely categorical variables and their datatype should be converted into `factor`.
+
+```{r}
+unique(mental$age.group)
+unique(mental$sex)
+```
+
+Converting or casting their datatype into `factor` to ensure R treats them as such.
+
+```{r}
+mental$age.group <- factor(mental$age.group)
+mental$sex <- factor(mental$sex)
+mental$year <- factor(mental$year)
+```
+
+From the code below, I understand the range of years of the study are indeed from 2006 to 2019, as described in the question. More interestingly, the data values for each of the years are equal, at 4.
+
+```{r}
+unique(mental$year)
+summary(mental$year)
+```
+
+## Part (a) - Exploratory data analysis (EDA)
+
+### Descriptive statistics
+
+```{r}
+summary(mental)
+```
+
+The mean of hospitalisation rate is 62.24, median of hospitalisation rate is 60.45 for all sub-groups in the dataframe.
+
+From the later analyses (e.g., histogram), the distribution of hospitalisation rate is not normal and is positively skewed. The measure of centrality, median is 60.45 and the measure of dispersion, interquartile range is 9.775.
+
+```{r}
+IQR(mental$hospitalisation.rate)
+```
+
+The size of the dataset is 56 rows of values, which is small. The dataset is balanced as there are equal number of values for each of the years, each of the age.group and each of the sex factor levels.
+
+Here, we understand the data by their sub-groups.
+
+```{r}
+mental %>% 
+  group_by(sex) %>% 
+  summarise("Mean hospitalisation rate" = mean(hospitalisation.rate),
+            "S.D. hospitalisation rate" = sd(hospitalisation.rate))
+```
+
+The mean hospitalisation rate is generally higher for females than for males.
+
+```{r}
+mental %>% 
+  group_by(sex) %>% 
+  summarise("Median hospitalisation rate" = median(hospitalisation.rate),
+            "IQR hospitalisation rate" = IQR(hospitalisation.rate))
+```
+
+```{r}
+mental %>% 
+  group_by(age.group) %>% 
+  summarise("Mean hospitalisation rate" = mean(hospitalisation.rate),
+            "S.D. hospitalisation rate" = sd(hospitalisation.rate))
+```
+
+The mean hospitalisation rate is generally slightly higher for age group "12 to 24" than for age group "25+". The spread of hospitalisation rate is higher for age group "12 to 24" than for age group "25+".
+
+```{r group-by-year-descriptives}
+mental %>% 
+  group_by(year) %>% 
+  summarise("Mean hospitalisation rate" = mean(hospitalisation.rate),
+            "S.D. hospitalisation rate" = sd(hospitalisation.rate),
+            "Range of hospitalisation rate" = max(hospitalisation.rate) - min(hospitalisation.rate))
+```
+
+From the descriptive statistics, the mean hospitalisation rate across the years generally increased and the spread using standard deviation over the years generally increased. We can see that the spread similar increases (range of values) over the years. `year` could be considered as an index variable, but in this case, it will be included in the model for prediction. Given the year, we may be able to predict the hospitalisation rate.
+
+```{r}
+table(mental$year) / sum(table(mental$year))
+table(mental$age.group) / sum(table(mental$age.group))
+table(mental$sex) / sum(table(mental$sex))
+```
+
+The above are the frequency tables of each of the categorical variables in the dataset. Their relative proportions are equal, this means that the frequency of data for each factor level is the same.
+
+I will apply log transformation to the variables that are not normally distributed using `log(...)` function in R.
+
+### Simple visualisations
+
+```{r histogram-hospitalisation-rate, fig.cap="Histogram of hospitalisation rate."}
+hist(mental$hospitalisation.rate, xlab = "Hospitalisation Rate", main = "Histogram of Hospitalisation Rate")
+```
+
+From Figure \@ref(fig:histogram-hospitalisation-rate), It does not seem to be normally distributed, and the distribution is positively skewed or right skewed.
+
+```{r}
+# Instead of colour = sex, fill = sex is used
+ggplot(data = mental,
+       aes(y = stat(density), x = hospitalisation.rate, fill = sex)) +
+  geom_density(kernel="gaussian", alpha = 0.25) +
+  theme(legend.position = c(0.8875, 0.815)) + 
+  labs(title="Density plots of Hospitalisation Rate by Sex",
+       x = "Hospitalisation Rate",
+       y = "Density",
+       fill = "Sex")
+```
+
+```{r}
+ggplot(data = mental,
+       aes(y = stat(density), x = hospitalisation.rate, fill = age.group)) +
+  geom_density(kernel="gaussian", alpha = 0.25) +
+  theme(legend.position = c(0.8875, 0.815)) + 
+  labs(title="Density plots of Hospitalisation Rate by Age Group",
+       x = "Hospitalisation Rate",
+       y = "Density",
+       fill = "Age group")
+```
+
+The distribution for hospitalisation rate for age group 25+ years old patients shows a bimodal distribution, while for age group 12 to 25, the distribution is rather uniform, and can be interpreted as right-skewed.
+
+```{r}
+ggplot(data = mental,
+       aes(y = stat(density), x = hospitalisation.rate, fill = year)) +
+  geom_density(kernel="gaussian", alpha = 0.1) +
+
+  labs(title="Density plots of Hospitalisation Rate by Year",
+       x = "Hospitalisation Rate",
+       y = "Density",
+       fill = "Year")
+```
+
+The above density plot by year is too difficult to interpret, since the factor year variable has too many levels.
+
+<!-- https://r-graph-gallery.com/135-stacked-density-graph.html -->
+
+```{r}
+ggplot(data = mental, 
+       aes(y = stat(density), x = hospitalisation.rate, fill = year)) +
+  geom_density(kernel="gaussian", alpha = 0.1, adjust=1.5) +
+    facet_wrap(~year) +
+    theme(
+      legend.position="none",
+      panel.spacing = unit(0.70, "lines"),
+      axis.ticks.x=element_blank()
+    ) +
+  labs(title="Density plots of Hospitalisation Rate by Year",
+       x = "Hospitalisation Rate",
+       y = "Density",
+       fill = "Year")
+```
+
+```{r}
+boxplot(mental$hospitalisation.rate ~ mental$sex, 
+        xlab = "Sex",
+        ylab = "Hospitalisation rate",
+        main = "Comparative Boxplots of Hospitalisation Rate by Sex")
+```
+
+```{r}
+boxplot.stats(mental$hospitalisation.rate[mental$sex == "Female"])$out # outliers for female
+```
+
+The median hospitalisation rate for males are smaller than for females. The hospitalisation rate for females have a larger variability (range), and there are two outliers with hospitalisation rate values 97.8 and 101.2.
+
+```{r}
+boxplot(mental$hospitalisation.rate ~ mental$age.group, 
+        xlab = "Age group",
+        ylab = "Hospitalisation rate",
+        main = "Comparative Boxplots of Hospitalisation Rate by Age Group")
+```
+
+Visually, the spread of hospitalisation rate for age group "12 to 24" is comparatively larger than the spread of age group "25+".
+
+```{r}
+boxplot(mental$hospitalisation.rate ~ mental$year, 
+        xlab = "Year",
+        ylab = "Hospitalisation rate",
+        main = "Comparative Boxplots of Hospitalisation Rate by Year",
+        las = 2)
+```
+
+Visually, the median of the hospitalisation rate increases over the years from 2006 to 2019. More interestingly, the right whisker of the box-and-whisker diagram becomes noticeably longer over the years, and between 2015 to 2019, the distribution of hospitalisation rate in each year becomes more noticeably right-skewed or positively skewed. The longer whiskers are supported by the increasing range of values over the years.
+
+### Size of the dataset
+
+```{r}
+nrow(mental)
+```
+
+There are 56 rows of data in the dataset or 56 sets of values. This could be consider as a small sample size for some analyses.
+
+### Completeness of the dataset
+
+From the outputs above, the dataset has no missing values, and there are equal frequency of values for each of the factor levels. Hence, I would consider that the dataset is balanced.
+
+```{r}
+barplot(table(mental$year), las = 2)
+```
+
+## Part (b) Models considered in equation format
+
+### With and without *log* transformation
+
+The variables that are categorical have already been converted into `factor` datatype in R and have been replaced in the dataframe as such.
+
+The models would consider transformations.
+
+The factor variable `year` is included, predictions could be made, given a year between 2006 to 2019 on a xtest dataset.
+
+```{r}
+models.1 <- c(
+  "hospitalisation.rate ~ factor(year) + factor(sex) + factor(age.group)",
+  "log(hospitalisation.rate) ~ factor(year) + factor(sex) + factor(age.group)",
+  "hospitalisation.rate ~ factor(sex) + factor(age.group)"
+)
+```
+
+```{r}
+# mental$age.group <- relevel(mental$age.group, ref = "25+")
+# mental$sex <- relevel(mental$sex, ref = "Male")
+# mental$year <- relevel(mental$year, ref = "2007")
+```
+
+```{r, results = "asis"}
+print_eqns(models.1, dataset = mental)
+```
+
+I first try to fit the model without transformation.
+
+```{r}
+mental.model.1 <- lm(as.formula(models.1[1]), data = mental)
+
+summary(mental.model.1)
+```
+
+```{r}
+confint(mental.model.1, parm = c("factor(sex)Male", "factor(year)2015", "factor(year)2016" ), level = 0.95)
+```
+
+In the above model, we are taking year = 2006, sex = female, and age group = "12 to 24" as the reference variables. There is significantly higher hospitalisation rate for years 2015 to 2019 compared to year 2006. Males have significantly lower hospitalisation rate than females of around 12.775 (-17.64, -7.91) per 10,000 population in Australia.
+
+```{r}
+mental.model.2 <- lm(as.formula(models.1[2]), data = mental)
+
+summary(mental.model.2)
+```
+
+As identified in section \@ref(1-assumptions), there are no real differences between the model with transformation and the model without transformation.
+
+Therefore, to avoid affecting the scale of hospitalisation rate, I have decided to retain and use the model without any transformation.
+
+```{r}
+mental.model.3 <- lm(as.formula(models.1[3]), data = mental)
+
+summary(mental.model.3)
+```
+
+### With interaction effects (without transformations)
+
+After studying the *main effects*, I would want to consider if there are any interaction effects between the independent variables.
+
+I consider all the possible models with interaction effect, for models without any transformations.
+
+Similarly, I have already converted the factor variables to the correct datatype (factor) in the dataframe, so I don't have to directly do it on the model equations here. The first model without interaction effect is included.
+
+The number of possible interaction effects between the three of the categorical variables are quite numerous. This adds to the model complexity and should only be included if there is a reason to believe that interaction effects between the terms exist, and we want to determine if there is an improvement to the model compared to not having them.
+
+The most probable interaction terms is/are:
+
+-   sex \* age.group -- Could sex depend on the age group that results in significant difference in the hospitalisation rate?
+
+-   year \* sex -- Could sex depend on the year in question resulting in significant differences in the hospitalisation rate?
+
+<!-- # "hospitalisation.rate ~ year*sex*age.group" -->
+
+```{r}
+models.1.interaction <- c(
+  "hospitalisation.rate ~ year + sex + age.group",
+  "hospitalisation.rate ~ year * sex",
+  "hospitalisation.rate ~ year * age.group",
+  "hospitalisation.rate ~ sex * age.group"
+)
+```
+
+```{r, results = "asis", echo=FALSE}
+# print_eqns(models.1.interaction, dataset = mental)
+```
+
+```{r}
+mental.model.1.interaction.2 <- lm(as.formula(models.1.interaction[2]), data = mental)
+
+summary(mental.model.1.interaction.2)
+
+summ(mental.model.1.interaction.2)
+```
+
+```{r}
+mental.model.1.interaction.3 <- lm(as.formula(models.1.interaction[3]), data = mental)
+
+summary(mental.model.1.interaction.3)
+
+summ(mental.model.1.interaction.3, confint = TRUE)
+```
+
+```{r}
+mental.model.1.interaction.4 <- lm(as.formula(models.1.interaction[4]), data = mental)
+
+summary(mental.model.1.interaction.4)
+
+summ(mental.model.1.interaction.4, confint = TRUE)
+```
+
+The interaction effect and the main effects are statistically significant. The adjusted $R^2 = 0.38$.
+
+## Part (c) - Consideration of assumptions {#1-assumptions}
+
+### Linearity
+
+**Definition**: The relationship between the response variable `hospitalisation.rate` and each of the explanatory variables being linear. However, since the explanatory variables are all categorical, this is not applicable.
+
+The linearity of the linear regression cannot be assessed, because the explanatory variables are all categorical. It is inappropriate to visualise the relationship between `hospitalisation.rate` and the categorical variables on a scatterplot for assessment of linearity.
+
+### Homoscedasticity (equal variances) and normality {#1-assumptions-normality-homoscedasticity}
+
+**Definition**: Homoscedasticity assumption is violated (*heteroscedasticity*) when the size of the error term is not the same across values of the explanatory variables. Instead of the spread of data across residuals being constant (cigar-shaped), a funnel-like pattern (e.g., increasing variance of residuals) across fitted values can be seen. For normality assumption to hold, the residuals of the model should tend towards a normal distribution.
+
+For assessment of normality and homoscedasticity of linear regression, we can use the normal Q-Q plot of residuals and scatterplot of residuals vs. fitted values for the linear model.
+
+See figures \@ref(fig:qq-before) and \@ref(fig:scatter-residuals-fitted-before) for the normal Q-Q plot and scatterplot of residuals vs. fitted values before the log transformation, and figures \@ref(fig:qq-log) and \@ref(fig:scatter-residuals-fitted-log) for the plots after log transformation of the `hospitalisation.rate` variable.
+
+With reference to figure \@ref(fig:qq-before), the distribution is unlikely to be normal, as there are visually noticeable deviation of the points from the normal line. Hence, the distribution is unlikely to be normal, normality assumption does not hold. Furthermore, figure \@ref(fig:histogram-hospitalisation-rate), shows the shape of the histogram is quite positively skewed.
+
+From figure \@ref(fig:scatter-residuals-fitted-before), there is some funnel-like shape present in the plot of residuals vs. fitted values. Hence, the assumption of equal variances (homoscedastity) seems to be violated.
+
+After log transformation, and taking reference from \@ref(fig:qq-log) and \@ref(fig:scatter-residuals-fitted-log), there is no real difference between the scatterplot of residuals vs. fitted values. The funnel-like shape still exists, even though on smaller scales. There is only very slight to no real improvement in the normal Q-Q plot, the distribution is likely not normal and is heteroscedastic.
+
+### Independence of observations
+
+**Definition**: Each observation is independent of other observations in the dataset (no replicates).
+
+Independence of observations is unlikely to be violated (and assumed as not violated) as each hospitalisation rate observation is from a distinct and different year, sex and age group.
+
+However, for the purposes of analyses, I assume that these assumptions are not violated for multiple linear regression. I would assume that the model before or after log transformation is normal and homoscedastic. Hence, for the descriptive statistics, I mostly rely on assuming that the distribution is normal.
+
+<!-- ### Collinearity -->
+
+## Part (d) - Visualisation of model diagnostics with interpretation
+
+```{r qq-before, fig.cap="Normal Q-Q Plot of Residuals before any log transformation"}
+qqnorm(mental.model.1$residuals, main = "Normal Q-Q Plot of Residuals")
+qqline(mental.model.1$residuals, lw = 1.5, col = "red")
+```
+
+```{r scatter-residuals-fitted-before, fig.cap="Scatterplot of residuals vs. fitted values before log transformation"}
+plot(mental.model.1$fitted.values, mental.model.1$residuals, xlab = "Fitted Values", ylab = "Residuals", main = "Scatterplot of Residuals vs. Fitted Values")
+abline(h = 0, col = "red")
+```
+
+As mentioned in section \@ref(1-assumptions-normality-homoscedasticity), there are deviation of points from the normal line on the normal QQ plot, indicating that the distribution before log transformation is not normal. There is also some funnel-like shape from the residuals of the fitted values above 65. Hence, this violates the assumptions, and makes the model unreliable.
+
+```{r qq-log, fig.cap="Normal Q-Q Plot of Residuals after log transform of `hospitalisation.rate` variable"}
+qqnorm(mental.model.2$residuals, main = "Normal Q-Q Plot of Residuals")
+qqline(mental.model.2$residuals, lw = 1.5, col = "red")
+```
+
+```{r scatter-residuals-fitted-log, fig.cap="Scatterplot of residuals vs. fitted values after log transform of `hospitalisation.rate` variable"}
+plot(mental.model.2$fitted.values, mental.model.2$residuals, xlab = "Fitted Values", ylab = "Residuals", main = "Scatterplot of Residuals vs. Fitted Values")
+abline(h = 0, col = "red")
+```
+
+As mentioned in section \@ref(1-assumptions-normality-homoscedasticity), there is no real difference in the normality and homoscedasticity assumptions. They are still considered violated.
+
+```{r}
+qqnorm(mental.model.1.interaction.4$residuals, main = "Normal Q-Q Plot of Residuals")
+qqline(mental.model.1.interaction.4$residuals, lw = 1.5, col = "red")
+```
+
+```{r}
+plot(mental.model.1.interaction.4$fitted.values, mental.model.1.interaction.4$residuals, xlab = "Fitted Values", ylab = "Residuals", main = "Scatterplot of Residuals vs. Fitted Values")
+abline(h = 0, col = "red")
+```
+
+The diagnostic plot of model interaction effect (age group \* sex) is shown above. Similarly, there is funnel-like shape that violates the assumption of homoscedasticity in the scatterplot of residuals vs. fitted values and large deviation of points deviating from the normal line on the QQ plot, which means the normality assumption is violated. I am assuming that the model is reliable.
+
+## Part (e) - Table of results
+
+![](one.png)
+
+**Final model chosen**: `hospitalisation.rate ~ sex * age.group`
+
+**Description of the results**: The residual standard error is lower. Both models are statistically significant based on the ANOVA F-test. The model with interaction effect between sex and age group accounts for some unexplained effects in the model without interaction effect (`hospitalisation.rate ~ factor(sex) + factor(age.group)`).
+
+For the model equation chosen, there is sufficient evidence to suggest that $\beta_{1}$, $\beta_{2}$ and $\beta_{3}$ are significantly different from 0, p-values \< 0.05. There are significantly lower males for hospitalisation rate ($\beta_{1}$ = 22.76). There is statistically significant relationship for males that are age group 25+, with significantly higher hospitalisation rate of 19.96. This is in contrast to the lower hospitalisation rate (11.18) for those age group 25+ (both males and females) compared to age group 12 - 24.
+
+# Question 2
+
+We are attempting to predict the daily milk production using candidate linear models.
+
+The question identified that daily milk production (*`MilkProd`* - 24 hour milk production in mL) is the response variable. The potential predictor variables are:
+
+-   Baby gender (`BabyGender`)
+-   Birth weight (`BabyBirthweight`)
+-   Maternal body mass index (`MaternalBMI`)
+-   Maternal health (`MaternalHealth`)
+
+Getting a glimpse of the dataset and understanding if the variables are of the correct datatype (such as factor).
+
+```{r}
+glimpse(milkp) # function from tidyverse package
+```
+
+As seen from the output, `MaternalHealth` is not of the correct datatype (`double` - `dbl` instead of `factor` - `fct`). I will have to remember to cast it to the correct datatype later.
+
+There are missing values in the dataset, and we should consider dropping the rows with missing values.
+
+```{r}
+sum(is.na(milkp))
+```
+
+## Part (a) - Six candidate models
+
+The candidate models defined in the question is either one or both baby variables and either one or both maternal variables.
+
+<!-- Here I consider all the possible candidate models, based on the above definition. From the four (*distinct*) predictor variables, we can tell and calculate the total number of model equations, as shown in \ref{eq:candidate_model}. -->
+
+<!-- No. of candidate models = $$(n-1)! = (4-1)! = 3! = 6$$ \label{eq:candidate_model} -->
+
+Firstly, I create a variable which contains a column vector of all the possible candidate models in strings.
+
+```{r}
+models <- c(
+  "MilkProd ~ factor(BabyGender)",
+  "MilkProd ~ BabyBirthweight",
+  "MilkProd ~ factor(MaternalBMI)",
+  "MilkProd ~ factor(MaternalHealth)",
+  "MilkProd ~ factor(BabyGender) + BabyBirthweight",
+  "MilkProd ~ factor(MaternalBMI) + factor(MaternalHealth)"
+)
+```
+
+Their model equations are as follows:
+
+```{r, results = "asis", echo = FALSE}
+print_eqns(models = models, dataset = milkp)
+```
+
+## Part (b) - Bootstrap method
+
+### Prepare our dataset
+
+Firstly, there are *NA* values in the dataset. Remove them. Instead of dropping all rows with NA values, there are columns that we don't require. Drop these columns first, then drop NA values, or else there could be issues with the sample size.
+
+```{r}
+milkp.na.rm <- milkp %>% select(MilkProd, 
+                                BabyGender, BabyBirthweight, 
+                                MaternalBMI, MaternalHealth) %>% drop_na()
+```
+
+There are 40 observations left after removing *NA* values.
+
+```{r}
+glimpse(milkp.na.rm)
+```
+
+### Define 3 types of functions
+
+#### Define a function that relates x to y
+
+```{r}
+model.fit <- function(x, y) {
+  
+  return(lm(y ~ x - 1))
+}
+```
+
+#### Define a function that calculates the predicted values ($\widehat{Y}$)
+
+```{r}
+predicted.values <- function(model.fit, x) {
+  return(x %*% model.fit$coefficients)
+}
+```
+
+#### Define a function that calculates the squared residuals ($(Y - \widehat{Y})^2$)
+
+```{r}
+squared.residuals <- function(Y, Y.hat) {
+  return((Y - Y.hat)^2)
+}
+```
+
+### Find out the bootstrap prediction error for this model with 100 bootstrap samples
+
+```{r}
+for (i in 1:length(models)) {
+  bootpred.results <- bootpred(model.matrix(as.formula(models[i]), data = milkp.na.rm),
+                               milkp.na.rm$MilkProd, nboot = 100,
+                               theta.fit = model.fit,
+                               theta.predict = predicted.values,
+                               err.meas = squared.residuals
+                               )
+  
+  print(c(bootpred.results[[3]], sqrt(bootpred.results[[3]])))
+  
+}
+```
+
+Each row of the results above indicate each model in the `models` variable. The first value of each row is the MSE and the second value of each row is the RMSE.
+
+## Part (c) - 10-fold cross-validation
+
+### Create a variable that contains all the candidate models in strings {#2-models}
+
+I will re-use the formula above `models`.
+
+```{r}
+models
+```
+
+Set the number of cross validations.
+
+```{r}
+ncrossval <- 100
+```
+
+### Create empty matrices to collect PRESS, MSE, and RMSE values
+
+```{r}
+PRESS.mat <- matrix(NA, nrow = 100, ncol = length(models))
+MSE.mat <- matrix(NA, nrow = 100, ncol = length(models))
+RMSE.mat <- matrix(NA, nrow = 100, ncol = length(models))
+```
+
+### Create nested for-loops to conduct 10-fold CV for `ncrossval` repetitions
+
+Notice, we are using the functions already defined above.
+
+```{r}
+for (i in 1:ncrossval) {
+  for (j in 1:length(models)) {
+     milkp.cv.10 <- crossval(model.matrix(as.formula(models[j]), data=milkp.na.rm), milkp.na.rm$MilkProd, theta.fit = model.fit, theta.predict = predicted.values, ngroup = 10)
+     
+     PRESS.mat[i,j] <- sum((milkp.na.rm$MilkProd - milkp.cv.10$cv.fit)^2)
+     
+     MSE.mat[i,j] <- PRESS.mat[i,j]/length(milkp.na.rm$MilkProd)
+     
+     RMSE.mat[i,j] <- sqrt(MSE.mat[i,j])
+  }
+}
+```
+
+Find the mean of PRESS, MSE, and RMSE values
+
+```{r}
+PRESS.mean.1 <- apply(PRESS.mat, MARGIN = 2, FUN = mean) # mean PRESS values for each of the candidate models
+MSE.mean.1 <- apply(MSE.mat, MARGIN = 2, FUN = mean) # mean MSE values for each of the candidate models
+RMSE.mean.1 <- apply(RMSE.mat, MARGIN = 2, FUN = mean) # mean RMSE values for each of the candidate models
+
+c(PRESS.mean.1, MSE.mean.1, RMSE.mean.1)
+```
+
+For the results above, the first row (first six values) represents the PRESS values, second row represents the MSE values and the third row represents the RMSE values. Each column represents each of the candidate models.
+
+## Part (d) - Table of estimators
+
+The model number are numbered according to the order of the models defined in the variable `models` above (see section \@ref(2-models)).
+
+```{=tex}
+\begin{table}[]
+\begin{tabular}{|c|cc|cc|}
+\hline
+\textbf{Model Number} & \multicolumn{2}{c|}{\textbf{Bootstrap}}           & \multicolumn{2}{c|}{\textbf{10-fold cross-validation}} \\ \hline
+                      & \multicolumn{1}{c|}{\textbf{MSE}} & \textbf{RMSE} & \multicolumn{1}{c|}{\textbf{MSE}}    & \textbf{RMSE}   \\ \hline
+1                     & \multicolumn{1}{c|}{41910.4386}   & 204.7204      & \multicolumn{1}{c|}{42234.2878}      & 205.5082        \\ \hline
+2                     & \multicolumn{1}{c|}{37638.1283}   & 194.0055      & \multicolumn{1}{c|}{37870.9851}      & 194.6026        \\ \hline
+3                     & \multicolumn{1}{c|}{41130.7746}   & 202.8072      & \multicolumn{1}{c|}{41126.6884}      & 202.7952        \\ \hline
+4                     & \multicolumn{1}{c|}{33890.0695}   & 184.0926      & \multicolumn{1}{c|}{33924.8003}      & 184.1846        \\ \hline
+5                     & \multicolumn{1}{c|}{38378.0866}   & 195.9033      & \multicolumn{1}{c|}{38363.59}        & 195.8627        \\ \hline
+6                     & \multicolumn{1}{c|}{33774.9362}   & 183.7796      & \multicolumn{1}{c|}{33858.5046}      & 184.003         \\ \hline
+\end{tabular}
+\end{table}
+```
+## Part (e) - Best model for prediction
+
+The sixth model, `MilkProd ~ factor(MaternalBMI) + factor(MaternalHealth)` is the best model for prediction purposes. The MSE and RMSE scores are the lowest for both bootstrap .632+ method and 10-fold cross-validation methods.
+
+Model 4, `MilkProd ~ factor(MaternalHealth)` can also be considered as the best model for prediction. Although Model 6 has the lowest MSE and RMSE scores, Model 4 only falls slightly behind, being narrowly the second lowest MSE and RMSE scores. The one standard error rule can be utilised and Model 4 can be selected, if its lesser number of predictors lies within one standard error of the MSE. Model 4 may be considered if it is costly to obtain data of maternal BMI.
+
+```{r}
+summary(lm(as.formula(models[4]), data = milkp.na.rm))
+```
+
+```{r}
+summary(lm(as.formula(models[6]), data = milkp.na.rm))
+```
+
+```{r}
+# knitr::purl("Assignment_2.Rmd", documentation = 0) # generate R script
+```
